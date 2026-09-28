@@ -198,6 +198,7 @@ def render_run(inp: BookInput, options: TranslationOptions, api_key: str | None)
     started = any(job.translations.values())
     if started:
         st.info(f"Progresso salvo: {job.done_count} de {len(job.selected)} partes já traduzidas.")
+    _render_progress_file(job, started)
 
     label = "Continuar tradução" if started and not job.finished else "Traduzir livro"
     start = st.button(label, type="primary", use_container_width=True, disabled=job.finished)
@@ -265,6 +266,52 @@ def _run(client, inp: BookInput, job: BookJob, options: TranslationOptions) -> N
     except API_ERRORS as exc:
         msg = get_engine(options.engine).describe_error(exc)
         st.error(msg + " O progresso está salvo: toque em Continuar para retomar.")
+
+
+def _render_progress_file(job: BookJob, started: bool) -> None:
+    """Baixar/retomar o progresso por arquivo.
+
+    O disco do Streamlit é apagado quando o app hiberna; com esse arquivo o
+    trabalho continua em outro dia ou em outro aparelho."""
+    with st.expander("💾 Arquivo de progresso", expanded=not started):
+        st.caption(
+            "Baixe este arquivo ao parar por hoje. Da próxima vez, envie o mesmo PDF, "
+            "escolha a mesma divisão de capítulos e reenvie o arquivo aqui: a tradução "
+            "continua de onde parou, sem refazer nada."
+        )
+        if started:
+            st.download_button(
+                "⬇️ Baixar progresso (.json)",
+                data=job.to_json(),
+                file_name=f"progresso - {(job.book_title or 'livro').strip().replace('/', '-')}.json",
+                mime="application/json",
+                use_container_width=True,
+                on_click="ignore",
+            )
+        upload = st.file_uploader(
+            "Retomar de um arquivo de progresso",
+            type=["json"],
+            key=f"progress_upload_{job.id}",
+        )
+        if upload is None:
+            return
+        marker = (job.id, upload.file_id)
+        if st.session_state.get("progress_imported") == marker:
+            return
+        try:
+            other = BookJob.from_json(upload.getvalue())
+        except (ValueError, TypeError):
+            st.error("Arquivo de progresso inválido.")
+            return
+        if not other.same_division(job.segments):
+            st.error(
+                "Esse progresso é de outra divisão de capítulos. Escolha acima a mesma "
+                "divisão usada antes (o mesmo método e o mesmo nível de sumário)."
+            )
+            return
+        job.adopt(other)
+        st.session_state["progress_imported"] = marker
+        st.rerun()
 
 
 def _render_redo(job: BookJob) -> None:

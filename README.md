@@ -29,6 +29,7 @@ barra lateral:
 
 ```
 app.py                  # interface Streamlit
+traduzir_livro.py       # tradução de livros pelo terminal, sem navegador
 tradutor/
   prompts.py            # system prompt e montagem do pedido
   translator.py         # divisão em trechos e streaming, independente do motor
@@ -175,5 +176,48 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
 Livros digitalizados, sem texto selecionável, também funcionam: as páginas são
 enviadas como imagem, 12 por vez.
 
-A pasta `.traducoes/` guarda o progresso. No Streamlit Community Cloud ela
-some quando o app reinicia, então baixe o resultado assim que terminar.
+### Arquivo de progresso
+
+A pasta `.traducoes/` guarda o progresso, mas no Streamlit Community Cloud ela
+some quando o app hiberna ou reinicia. Para não perder o trabalho de um dia
+para o outro, use **💾 Arquivo de progresso**:
+
+1. Ao parar, toque em **Baixar progresso (.json)**.
+2. Da próxima vez, envie o mesmo PDF, escolha **a mesma divisão de capítulos** e
+   reenvie esse arquivo em **Retomar de um arquivo de progresso**.
+3. A tradução continua de onde parou, e no fim sai um PDF único.
+
+O arquivo guarda só o texto traduzido: nenhuma chave de API vai nele.
+
+## Traduzir um livro pelo terminal
+
+No computador, `traduzir_livro.py` faz o mesmo trabalho sem navegador. Ele roda
+sozinho por horas, salva o progresso a cada trecho e regrava o livro a cada
+capítulo terminado, então pode ser interrompido a qualquer momento.
+
+```bash
+# ver os capítulos encontrados
+python traduzir_livro.py livro.pdf --listar
+
+# traduzir tudo
+python traduzir_livro.py livro.pdf --titulo "Ética Cristã"
+
+# só alguns capítulos, do inglês, com o Claude
+python traduzir_livro.py livro.pdf --capitulos 1-8,12 --idioma inglês --motor claude
+```
+
+Rode o mesmo comando de novo para continuar de onde parou. Opções principais:
+
+| Opção | Para quê |
+|---|---|
+| `--listar` | mostra os capítulos e sai, sem traduzir |
+| `--capitulos 1-8,12` | escolhe as partes, pelos números do `--listar` |
+| `--dividir auto\|sumario\|titulos\|paginas` | como separar os capítulos |
+| `--nivel 2` / `--paginas 20` | detalhe da divisão por sumário ou por blocos |
+| `--motor gemini\|claude` | qual API usar |
+| `--qualidade rapida\|alta\|maxima` | profundidade de raciocínio do modelo |
+| `--idioma inglês` | idioma de origem (padrão: detectar) |
+| `--saida caminho/nome` | nome-base dos arquivos gerados |
+| `--notas-tradutor`, `--termo-original` | as mesmas opções do app |
+
+Ao final ficam três arquivos lado a lado: `.pdf`, `.txt` e `.md`.

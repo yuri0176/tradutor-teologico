@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -82,6 +82,31 @@ class BookJob:
 
     def delete(self) -> None:
         self.path.unlink(missing_ok=True)
+
+    def to_json(self) -> bytes:
+        """Arquivo de progresso para o usuário guardar e reenviar depois."""
+        return json.dumps(asdict(self), ensure_ascii=False, indent=1).encode("utf-8")
+
+    @classmethod
+    def from_json(cls, raw: bytes | str) -> "BookJob":
+        data = json.loads(raw)
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+    def same_division(self, segments: list[dict]) -> bool:
+        """O progresso só encaixa se a divisão em capítulos for a mesma."""
+        pages = lambda segs: [(s["start"], s["end"]) for s in segs]
+        return pages(self.segments) == pages(segments)
+
+    def adopt(self, other: "BookJob") -> None:
+        """Assume a tradução de outro trabalho (arquivo de progresso importado),
+        mantendo títulos e seleção atuais."""
+        self.translations = other.translations
+        self.planned = other.planned
+        self.warnings = other.warnings
+        self.input_tokens = other.input_tokens
+        self.output_tokens = other.output_tokens
+        self.save()
 
     # --------------------------------------------------------------- estado
     def segment(self, i: int) -> Segment:
