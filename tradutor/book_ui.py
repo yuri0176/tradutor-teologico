@@ -112,6 +112,7 @@ def render_input() -> BookInput | None:
     # ---------------------------------------------------------- seleção
     table = pd.DataFrame(
         {
+            "Nº": list(range(1, len(segments) + 1)),
             "Traduzir": [True] * len(segments),
             "Capítulo": [s.title for s in segments],
             "Páginas": [s.pages_label for s in segments],
@@ -126,15 +127,29 @@ def render_input() -> BookInput | None:
         key=f"segments_{digest[:12]}_{description}",
         hide_index=True,
         use_container_width=True,
-        disabled=["Páginas", "Palavras"],
+        disabled=["Nº", "Páginas", "Palavras"],
         column_config={
+            "Nº": st.column_config.NumberColumn(width="small"),
             "Traduzir": st.column_config.CheckboxColumn(width="small"),
             "Capítulo": st.column_config.TextColumn(width="large"),
         },
     )
     for seg, title in zip(segments, edited["Capítulo"]):
         seg.title = str(title).strip() or seg.title
-    selected = [i for i, flag in enumerate(edited["Traduzir"]) if flag]
+    # Faixa de partes: mais fácil que desmarcar dezenas de caixas no celular.
+    # A tradução vale para as partes que estão marcadas E dentro da faixa.
+    total = len(segments)
+    range_key = f"range_{digest[:12]}_{description}"
+    col_from, col_to = st.columns(2)
+    first = col_from.number_input("Traduzir da parte", 1, total, 1, key=f"{range_key}_from")
+    last = col_to.number_input("até a parte", 1, total, total, key=f"{range_key}_to")
+    if first > last:
+        st.warning("A parte inicial é maior que a final; nenhuma parte será traduzida.")
+    selected = [
+        i for i, flag in enumerate(edited["Traduzir"]) if flag and first - 1 <= i <= last - 1
+    ]
+    if first != 1 or last != total:
+        st.caption(f"Faixa {first}–{last}: {len(selected)} parte(s) marcada(s) dentro dela.")
 
     title = st.text_input("Título do livro (para a capa do PDF)", value=Path(uploaded.name).stem)
     return BookInput(data, book, segments, selected, title.strip())
