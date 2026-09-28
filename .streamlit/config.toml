@@ -1,0 +1,10 @@
+[server]
+# Limite de upload (MB) — suficiente para livros inteiros em PDF.
+maxUploadSize = 200
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#7a2e2e"
+font = "serif"

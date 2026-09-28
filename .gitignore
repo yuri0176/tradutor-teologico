@@ -1,0 +1,13 @@
+# Segredos
+.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Progresso das traduções de livros (retomada)
+.traducoes/

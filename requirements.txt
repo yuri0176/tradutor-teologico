@@ -1,0 +1,8 @@
+streamlit>=1.40
+google-genai>=1.30
+anthropic>=1.9
+pypdf>=5.0
+python-dotenv>=1.0
+fpdf2>=2.8
+markdown>=3.5
+uharfbuzz>=0.39  # hebraico da direita para a esquerda no PDF gerado
