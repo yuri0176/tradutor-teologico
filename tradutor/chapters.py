@@ -119,6 +119,31 @@ def remove_running_lines(pages: list[str]) -> list[str]:
     return cleaned
 
 
+def _extract_pages_fast(data: bytes) -> list[str] | None:
+    """Texto de todas as páginas com pypdfium2, cerca de 15 vezes mais rápido que
+    o pypdf (um livro de 1.900 páginas: ~8 s contra ~2 min). Devolve None se a
+    biblioteca não estiver instalada ou falhar; aí vale o pypdf."""
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(data)
+        try:
+            pages = []
+            for i in range(len(pdf)):
+                page = pdf[i]
+                textpage = page.get_textpage()
+                try:
+                    pages.append(textpage.get_text_range().replace("\r\n", "\n").replace("\r", "\n"))
+                finally:
+                    textpage.close()
+                    page.close()
+            return pages
+        finally:
+            pdf.close()
+    except Exception:
+        return None
+
+
 def read_book(data: bytes) -> Book:
     try:
         reader = PdfReader(io.BytesIO(data))
@@ -127,12 +152,18 @@ def read_book(data: bytes) -> Book:
                 reader.decrypt("")
             except Exception as exc:
                 raise PdfError("O PDF está protegido por senha.") from exc
-        raw_pages = []
-        for page in reader.pages:
-            try:
-                raw_pages.append(page.extract_text() or "")
-            except Exception:
-                raw_pages.append("")
+            fast = None  # o pypdfium2 não recebeu a senha vazia: usa o pypdf
+        else:
+            fast = _extract_pages_fast(data)
+        if fast is not None and len(fast) == len(reader.pages):
+            raw_pages = fast
+        else:
+            raw_pages = []
+            for page in reader.pages:
+                try:
+                    raw_pages.append(page.extract_text() or "")
+                except Exception:
+                    raw_pages.append("")
     except PdfReadError as exc:
         raise PdfError("Não foi possível ler o PDF. O arquivo pode estar corrompido.") from exc
     if not raw_pages:

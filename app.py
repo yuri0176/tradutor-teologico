@@ -177,6 +177,13 @@ with st.expander("Opções avançadas"):
         help="Ex.: justificação (*justification*).",
     )
     quality_label = st.radio("Qualidade", list(QUALITY), horizontal=True)
+    workers = st.slider(
+        "Capítulos ao mesmo tempo (modo livro)",
+        1, 5, 3,
+        help="Traduz vários capítulos em paralelo: mais rápido, mas o texto não aparece ao vivo. "
+        "Se o Gemini reclamar de limite por minuto, o app espera sozinho. Use 1 para ver o texto "
+        "enquanto é gerado.",
+    )
 
 options = TranslationOptions(
     source_language=LANGUAGES[language_label],
@@ -186,6 +193,7 @@ options = TranslationOptions(
     gloss_terms=gloss_terms,
     effort=QUALITY[quality_label],
     engine=engine_name,
+    workers=workers,
 )
 
 if source == BOOK:

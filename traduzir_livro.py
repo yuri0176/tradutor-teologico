@@ -85,6 +85,8 @@ def build_args() -> argparse.Namespace:
     )
     p.add_argument("--nivel", type=int, default=2, help="nível do sumário, com --dividir sumario")
     p.add_argument("--paginas", type=int, default=20, help="páginas por bloco, com --dividir paginas")
+    p.add_argument("--paralelo", type=int, default=3, metavar="N",
+                   help="capítulos traduzidos ao mesmo tempo (padrão 3; 1 = um por vez)")
     p.add_argument("--variante", default="português do Brasil")
     p.add_argument("--referencias", choices=["ponto", "dois-pontos"], default="ponto")
     p.add_argument("--notas-tradutor", action="store_true", help="permite notas [N.T.]")
@@ -150,6 +152,7 @@ def main() -> int:
         gloss_terms=args.termo_original,
         effort=QUALIDADES[args.qualidade],
         engine=args.motor,
+        workers=max(1, args.paralelo),
     )
     engine = get_engine(args.motor)
     api_key = os.getenv(engine.KEY_ENV)
@@ -183,6 +186,10 @@ def main() -> int:
     interrupted = False
     try:
         for ev in run_book(client, data, book, job, options, notify=lambda m: m and print(f"   … {m}")):
+            if ev.kind == "notify":
+                if ev.text:
+                    print(f"   … {ev.text}", flush=True)
+                continue
             seg = job.segment(ev.segment)
             n = order[ev.segment] + 1
             if ev.kind == "skip":
@@ -192,7 +199,7 @@ def main() -> int:
             elif ev.kind == "restart":
                 print("   … refazendo este trecho", flush=True)
             elif ev.kind == "chunk_done":
-                print(f"   trecho {ev.chunk + 1}/{ev.chunks} pronto", flush=True)
+                print(f"   [{n}/{total}] trecho {ev.chunk + 1}/{ev.chunks} pronto", flush=True)
             elif ev.kind == "segment_done":
                 write_outputs(job, base)  # salva o livro a cada capítulo
     except KeyboardInterrupt:

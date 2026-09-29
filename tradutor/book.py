@@ -10,6 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Callable, Iterator
@@ -38,7 +41,7 @@ def job_id(pdf_bytes: bytes, options: TranslationOptions, segments: list[Segment
     O motor (Gemini/Claude) não entra na conta: um mesmo livro pode ter
     capítulos traduzidos por motores diferentes."""
     h = hashlib.sha256(pdf_bytes)
-    opts = {k: v for k, v in asdict(options).items() if k != "engine"}
+    opts = {k: v for k, v in asdict(options).items() if k not in ("engine", "workers")}
     h.update(json.dumps(opts, sort_keys=True).encode())
     h.update(json.dumps([(s.start, s.end) for s in segments]).encode())
     h.update(b"scanned" if scanned else b"text")
@@ -145,7 +148,7 @@ class BookJob:
 
 @dataclass
 class Event:
-    kind: str  # "segment_start" | "chunk_start" | "text" | "restart" | "chunk_done" | "segment_done" | "skip"
+    kind: str  # "segment_start" | "chunk_start" | "text" | "restart" | "chunk_done" | "segment_done" | "skip" | "notify"
     segment: int = 0
     chunk: int = 0
     chunks: int = 0
@@ -169,8 +172,14 @@ def run_book(
     options: TranslationOptions,
     notify: Callable[[str], None] | None = None,
 ) -> Iterator[Event]:
-    """Traduz os segmentos selecionados em sequência, salvando após cada trecho."""
+    """Traduz os segmentos selecionados, salvando após cada trecho.
+
+    Com `options.workers` > 1, vários capítulos são traduzidos ao mesmo tempo (o texto
+    ao vivo deixa de ser emitido e os avisos de espera chegam como eventos "notify")."""
     engine = get_engine(options.engine)
+    if options.workers > 1 and sum(1 for i in job.selected if not job.is_segment_done(i)) > 1:
+        yield from _run_parallel(client, pdf_bytes, book, job, options)
+        return
     for i in sorted(job.selected):
         key = str(i)
         seg = job.segment(i)
@@ -232,3 +241,101 @@ def run_book(
             yield Event("chunk_done", segment=i, chunk=c, chunks=len(units))
 
         yield Event("segment_done", segment=i)
+
+
+def _plan_segment(job: BookJob, book: Book, pdf_bytes: bytes, i: int) -> list:
+    """Trechos de um segmento (texto por parágrafos ou fatias do PDF digitalizado)."""
+    key, seg = str(i), job.segment(i)
+    if job.scanned:
+        units: list = segment_pdf_parts(pdf_bytes, seg)
+    else:
+        text = segment_text(book, seg)
+        units = split_into_chunks(text) if text.strip() else []
+    job.planned[key] = len(units)
+    job.translations.setdefault(key, [])
+    if not units:
+        note = f"{seg.title}: sem texto para traduzir (página só com imagem ou em branco)."
+        if note not in job.warnings:
+            job.warnings.append(note)
+    return units
+
+
+def _run_parallel(client, pdf_bytes: bytes, book: Book, job: BookJob, options: TranslationOptions) -> Iterator[Event]:
+    """Um capítulo por vez em cada trabalhador; os trechos de um capítulo seguem em
+    ordem, cada um recebendo o final do anterior. Só a thread principal fala com a
+    interface: os trabalhadores mandam eventos por uma fila."""
+    engine = get_engine(options.engine)
+    pending = [i for i in sorted(job.selected) if not job.is_segment_done(i)]
+    for i in sorted(job.selected):
+        if job.is_segment_done(i):
+            yield Event("skip", segment=i)
+    units_by_seg = {i: _plan_segment(job, book, pdf_bytes, i) for i in pending}
+    job.save()
+
+    events: queue.Queue = queue.Queue()
+    lock = threading.Lock()
+    stop = threading.Event()
+
+    def worker(i: int) -> None:
+        try:
+            key, seg, units = str(i), job.segment(i), units_by_seg[i]
+            events.put(Event("segment_start", segment=i, chunks=len(units)))
+            with lock:
+                done = list(job.translations[key])
+                previous = done[-1][-CONTEXT_TAIL_CHARS:] if done else _previous_tail(job, i)
+            for c in range(len(done), len(units)):
+                if stop.is_set():
+                    return
+                events.put(Event("chunk_start", segment=i, chunk=c, chunks=len(units)))
+                message = build_user_message(
+                    None if job.scanned else units[c],
+                    source_language=options.source_language,
+                    variant=options.variant,
+                    bible_format=options.bible_format,
+                    translator_notes=options.translator_notes,
+                    gloss_terms=options.gloss_terms,
+                    part=c + 1,
+                    total_parts=len(units),
+                    previous_tail=previous,
+                    chapter_title=seg.title,
+                )
+                content = engine.document_content(units[c], message) if job.scanned else message
+                report = TranslationReport(notify=lambda m: events.put(Event("notify", text=m)))
+                pieces: list[str] = []
+                for piece in engine.stream(client, content, options.effort, report, f"{seg.title} (parte {c + 1})"):
+                    if stop.is_set():
+                        return  # pausa ou erro em outro capítulo: descarta este trecho
+                    if isinstance(piece, Restart):
+                        pieces.clear()
+                    else:
+                        pieces.append(piece)
+                translated = "".join(pieces)
+                with lock:
+                    if stop.is_set():
+                        return
+                    job.translations[key].append(translated)
+                    job.warnings.extend(report.warnings)
+                    job.input_tokens += report.input_tokens
+                    job.output_tokens += report.output_tokens
+                    job.save()
+                previous = translated[-CONTEXT_TAIL_CHARS:]
+                events.put(Event("chunk_done", segment=i, chunk=c, chunks=len(units)))
+            events.put(Event("segment_done", segment=i))
+        except BaseException as exc:  # repassa à thread principal
+            events.put(exc)
+
+    executor = ThreadPoolExecutor(max_workers=max(1, min(options.workers, len(pending))))
+    try:
+        for i in pending:
+            executor.submit(worker, i)
+        remaining = len(pending)
+        while remaining:
+            ev = events.get()
+            if isinstance(ev, BaseException):
+                raise ev
+            if ev.kind == "segment_done":
+                remaining -= 1
+            yield ev
+    finally:
+        stop.set()  # se a tela recarregou (Pausar) ou houve erro, os demais param
+        executor.shutdown(wait=False, cancel_futures=True)

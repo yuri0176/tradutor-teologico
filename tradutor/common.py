@@ -15,6 +15,7 @@ class TranslationOptions:
     gloss_terms: bool = False
     effort: str = "high"
     engine: str = "gemini"  # "gemini" | "claude"
+    workers: int = 1  # capítulos traduzidos ao mesmo tempo (modo livro)
 
 
 @dataclass

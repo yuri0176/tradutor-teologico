@@ -298,11 +298,29 @@ def _run(client, inp: BookInput, job: BookJob, options: TranslationOptions) -> N
         else:
             waiting.empty()
 
+    parallel = options.workers > 1
+    active: dict[int, str] = {}  # capítulos em andamento (modo paralelo)
     current, shown = "", 0
     try:
         for ev in run_book(client, inp.pdf_bytes, inp.book, job, options, notify):
+            if ev.kind == "notify":  # aviso de espera vindo de um trabalhador
+                notify(ev.text)
+                continue
             seg = job.segment(ev.segment)
             n = order[ev.segment]
+            if parallel:
+                if ev.kind == "chunk_start":
+                    active[ev.segment] = f"{seg.title[:45]} — trecho {ev.chunk + 1} de {ev.chunks}"
+                elif ev.kind == "segment_done":
+                    active.pop(ev.segment, None)
+                    log.write(f"✅ {seg.title}")
+                if ev.kind in ("chunk_start", "segment_done", "chunk_done"):
+                    progress.progress(
+                        min(job.done_count / total, 1.0),
+                        text=f"{job.done_count} de {total} partes prontas · {len(active)} em andamento",
+                    )
+                    live.markdown("**Em andamento agora:**\n\n" + "\n".join(f"- {t}" for t in active.values()))
+                continue
             if ev.kind == "chunk_start":
                 current, shown = "", 0
                 frac = (n + ev.chunk / max(ev.chunks, 1)) / total

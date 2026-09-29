@@ -120,7 +120,10 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
 - **Servidor sobrecarregado:** em erros 5xx ou quedas de conexão, o app espera
   (10 s, 20 s, 40 s…) e tenta de novo até 4 vezes. Se o texto do trecho já
   tinha começado a chegar, ele é descartado e gerado de novo, sem duplicar.
-- **Cota diária:** cada modelo do Gemini tem a sua própria cota gratuita por dia.
+- **Cota diária:** no plano gratuito, o `gemini-3.5-flash` permite **20 pedidos por dia**
+  (valor informado pelo Google para uma chave gratuita; pode mudar). Cada trecho
+  traduzido é um pedido, e um capítulo costuma usar de 2 a 6. Cada modelo do Gemini
+  tem a sua própria cota gratuita por dia.
   Quando a do modelo principal acaba, o app passa sozinho para o próximo da
   lista (`gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash`, os que a sua
   chave enxergar) e registra um aviso indicando qual modelo traduziu cada trecho.
@@ -164,9 +167,13 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
    usar. No Gemini, compare com os limites diários do plano gratuito, porque um
    livro inteiro pode levar mais de um dia. No Claude, aparece o custo estimado
    em dólares.
-4. Os capítulos vão para a API **em sequência**. Capítulos longos são divididos
-   por parágrafo, e cada trecho recebe o final do anterior para manter a mesma
-   terminologia ao longo do livro.
+4. Os capítulos vão para a API **vários ao mesmo tempo** (o controle **"Capítulos ao
+   mesmo tempo"**, em Opções avançadas, vai de 1 a 5; o padrão é 3). Dentro de
+   cada capítulo, os trechos seguem em ordem: capítulos longos são divididos por
+   parágrafo, e cada trecho recebe o final do anterior para manter a mesma
+   terminologia. Em paralelo o texto não aparece ao vivo; com 1 capítulo por vez,
+   aparece. Se o Gemini pedir para esperar (limite por minuto), o app espera sozinho.
+   A leitura do PDF também é rápida: um livro de 1.900 páginas leva cerca de 10 s.
 5. **Cada trecho traduzido é salvo em disco** (pasta `.traducoes/`) assim que
    termina. Dá para tocar em **Pausar**, fechar a página, perder a conexão ou
    esgotar a cota diária: ao enviar o mesmo PDF com as mesmas opções, o botão
@@ -227,6 +234,7 @@ Rode o mesmo comando de novo para continuar de onde parou. Opções principais:
 | `--nivel 2` / `--paginas 20` | detalhe da divisão por sumário ou por blocos |
 | `--motor gemini\|claude` | qual API usar |
 | `--qualidade rapida\|alta\|maxima` | profundidade de raciocínio do modelo |
+| `--paralelo 3` | capítulos traduzidos ao mesmo tempo (padrão 3; 1 = um por vez) |
 | `--idioma inglês` | idioma de origem (padrão: detectar) |
 | `--saida caminho/nome` | nome-base dos arquivos gerados |
 | `--notas-tradutor`, `--termo-original` | as mesmas opções do app |
