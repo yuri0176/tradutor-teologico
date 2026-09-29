@@ -23,6 +23,7 @@ from .chapters import (
     SCANNED_PAGES_PER_REQUEST,
 )
 from .export import to_markdown, to_pdf, to_txt
+from .ui import copy_button
 from .pdf_utils import PdfError
 from .translator import (
     API_ERRORS,
@@ -39,6 +40,7 @@ _SKIP_TITLES = re.compile(
     r"^\s*(cover|front\s*cover|half\s*title|title\s*page|copyright(\s*page)?|contents|(brief|detailed)\s+contents|contents\s+in\s+brief|table\s+of\s+contents|"
     r"list\s+of\s+(illustrations|figures|tables)|illustrations|endorsements?|praise(\s+for.*)?|"
     r"also\s+by.*|about\s+the\s+author|(subject|scripture|name|author|general)?\s*index(es)?|"
+    r"newsletter(\s+sign\s*-?\s*up)?|sign\s*-?\s*up.*|p[aá]ginas\s+iniciais|back\s+cover|"
     r"capa|folha\s+de\s+rosto|sum[aá]rio|[ií]ndice(\s+.*)?|cr[eé]ditos|direitos\s+autorais|"
     r"inhalt(sverzeichnis)?|inhaltsverzeichnis|[ií]ndice\s+general|table\s+des\s+mati[eè]res)\s*$",
     re.IGNORECASE,
@@ -47,6 +49,20 @@ _SKIP_TITLES = re.compile(
 
 def is_front_matter(title: str) -> bool:
     return bool(_SKIP_TITLES.match(title))
+
+
+# Partes com menos texto que isso (páginas de divisão como "Parte 2", páginas só
+# com imagem) também começam desmarcadas: cada uma gastaria um pedido da cota.
+MIN_CONTENT_CHARS = 300
+# A partir daqui consideramos que o livro "começa de verdade".
+BOOK_START_CHARS = 5000
+
+
+def default_checked(title: str, chars: int | None) -> bool:
+    """Marcada por padrão? `chars` é None em livros digitalizados (sem texto)."""
+    if is_front_matter(title):
+        return False
+    return chars is None or chars >= MIN_CONTENT_CHARS
 
 
 @st.cache_data(max_entries=2, show_spinner="Lendo o PDF…")
@@ -127,24 +143,32 @@ def render_input() -> BookInput | None:
     st.caption(f"{book.page_count} páginas · {len(segments)} partes · divisão por {description}")
 
     # ---------------------------------------------------------- seleção
+    chars = [None if book.likely_scanned else len(segment_text(book, s)) for s in segments]
     table = pd.DataFrame(
         {
             "Nº": list(range(1, len(segments) + 1)),
-            "Traduzir": [not is_front_matter(s.title) for s in segments],
+            "Traduzir": [default_checked(s.title, c) for s, c in zip(segments, chars)],
             "Capítulo": [s.title for s in segments],
             "Páginas": [s.pages_label for s in segments],
             "Palavras": [
-                len(segment_text(book, s).split()) if not book.likely_scanned else None
-                for s in segments
+                None if c is None else round(c / 6.2)  # ≈ palavras (6,2 caracteres por palavra)
+                for c in chars
             ],
         }
     )
-    skipped = [s.title for s in segments if is_front_matter(s.title)]
+    skipped = [n for n, (s, c) in enumerate(zip(segments, chars), 1) if not default_checked(s.title, c)]
     if skipped:
         st.caption(
-            f"{len(skipped)} parte(s) sem conteúdo do livro começam desmarcadas, para não gastar a "
-            f"cota (ex.: {', '.join(skipped[:3])}). Marque na tabela se quiser traduzi-las."
+            f"{len(skipped)} parte(s) sem conteúdo do livro (capa, direitos, sumário, páginas quase vazias) "
+            "começam desmarcadas, para não gastar a cota. Marque na tabela se quiser traduzi-las."
         )
+    first_real = next(
+        (n for n, (s, c) in enumerate(zip(segments, chars), 1)
+         if c is not None and c >= BOOK_START_CHARS and not is_front_matter(s.title)),
+        None,
+    )
+    if first_real and first_real > 1:
+        st.caption(f"💡 O texto do livro começa na **parte {first_real}** ({segments[first_real - 1].title[:50]}).")
     edited = st.data_editor(
         table,
         key=f"segments_{digest[:12]}_{description}",
@@ -389,6 +413,8 @@ def _render_downloads(job: BookJob) -> None:
         f"Tokens usados até agora: {job.input_tokens:,} de entrada · {job.output_tokens:,} de saída".replace(",", ".")
     )
 
+    _render_summary(parts)
+
     base = (job.book_title or "livro").strip().replace("/", "-") + " - tradução"
     st.download_button(
         "⬇️ Baixar TXT",
@@ -424,3 +450,21 @@ def _render_downloads(job: BookJob) -> None:
             use_container_width=True,
             on_click="ignore",
         )
+
+
+def _render_summary(parts: list[tuple[Segment, str]]) -> None:
+    """O que já está traduzido, e uma forma de ler e copiar cada parte na tela
+    (útil se o download do arquivo não funcionar no seu navegador)."""
+    words = [len(text.split()) for _, text in parts]
+    st.markdown(f"**{len(parts)} parte(s) traduzida(s), {sum(words):,} palavras.**".replace(",", "."))
+    with st.expander("📖 Ler ou copiar uma parte na tela"):
+        titles = [seg.title for seg, _ in parts]
+        pick = st.selectbox(
+            "Parte",
+            range(len(parts)),
+            format_func=lambda i: f"{titles[i][:60]} — {words[i]:,} palavras".replace(",", "."),
+            key="read_part",
+        )
+        text = parts[pick][1]
+        copy_button(text)
+        st.markdown(text)

@@ -187,6 +187,10 @@ def run_book(
             units = split_into_chunks(text) if text.strip() else []
         job.planned[key] = len(units)
         job.translations.setdefault(key, [])
+        if not units:
+            note = f"{seg.title}: sem texto para traduzir (página só com imagem ou em branco)."
+            if note not in job.warnings:
+                job.warnings.append(note)
         job.save()
         yield Event("segment_start", segment=i, chunks=len(units))
 
