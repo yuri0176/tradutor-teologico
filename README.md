@@ -39,6 +39,7 @@ tradutor/
   pdf_utils.py          # extração de texto de PDF curto
   chapters.py           # leitura de livros e divisão em capítulos
   book.py               # tradução capítulo a capítulo, com progresso salvo
+  background.py         # tradução em segundo plano (continua com a página fechada)
   export.py             # reconstrução em PDF, TXT e Markdown
   book_ui.py            # interface do modo livro
   ui.py                 # CSS mobile-first e botão de copiar
@@ -193,6 +194,22 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
 
 Livros digitalizados, sem texto selecionável, também funcionam: as páginas são
 enviadas como imagem, 12 por vez.
+
+### Segundo plano (com a página fechada)
+
+O botão **🌙 Traduzir livro em segundo plano** inicia a tradução numa thread do
+servidor: você pode fechar a página ou bloquear o celular e o trabalho continua.
+Ao voltar, envie o mesmo PDF e o painel mostra o andamento (ou o livro pronto).
+Se a cota diária do Gemini acabar em todos os modelos, o app **espera a cota
+zerar** (meia-noite do Pacífico, cerca de 4h da manhã no Brasil) e continua
+sozinho. Erros passageiros de servidor também são esperados (5 min) e repetidos.
+O botão **⏹️ Parar** interrompe, e o progresso fica salvo.
+
+Limites do Streamlit gratuito: o app **adormece** depois de muitas horas sem nenhuma
+visita (cerca de 12 h) e o disco **é apagado** se ele reiniciar; a chave da API só
+existe na memória do servidor. Para rodadas de algumas horas isso basta. Para
+vários dias, abra o app de vez em quando (manda o app ficar acordado) e baixe o
+**arquivo de progresso**.
 
 ### Arquivo de progresso
 

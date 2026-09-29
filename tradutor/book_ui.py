@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from .background import ACTIVE_STATES, clear_run, get_run, start_run
 from .book import BookJob, job_id, run_book
 from .chapters import (
     Book,
@@ -262,19 +264,44 @@ def render_run(inp: BookInput, options: TranslationOptions, api_key: str | None)
         st.info(f"Progresso salvo: {job.done_count} de {len(job.selected)} partes já traduzidas.")
     _render_progress_file(job, started)
 
-    label = "Continuar tradução" if started and not job.finished else "Traduzir livro"
-    start = st.button(label, type="primary", use_container_width=True, disabled=job.finished)
-    if started and st.button("Recomeçar do zero", use_container_width=True):
-        job.delete()
-        st.rerun()
-    if started:
-        _render_redo(job)
+    run = get_run(jid)
+    bg = run.snapshot() if run else None
+    running_bg = bool(bg and bg.state in ACTIVE_STATES)
 
-    if start:
-        if not api_key:
-            st.error(f"Falta a chave do {engine.LABEL}. Coloque-a no .env ({engine.KEY_ENV}) ou na barra lateral.")
-            return
-        _run(engine.make_client(api_key), inp, job, options)
+    if running_bg:
+        _bg_panel(jid)  # andamento ao vivo; os botões de iniciar ficam escondidos
+    else:
+        if bg and bg.state == "error":
+            st.error(f"A tradução em segundo plano parou: {bg.error} O progresso está salvo.")
+        elif bg and bg.state == "done" and job.finished:
+            st.success("Livro traduzido em segundo plano! Baixe o resultado abaixo.")
+        label = "Continuar tradução" if started and not job.finished else "Traduzir livro"
+        start_bg = st.button(
+            "🌙 " + label + " em segundo plano",
+            type="primary",
+            use_container_width=True,
+            disabled=job.finished,
+            help="Continua no servidor com a página fechada ou o celular bloqueado. Se a cota do dia "
+            "acabar, espera zerar e segue sozinho.",
+        )
+        start = st.button(
+            label + " (com a página aberta)", use_container_width=True, disabled=job.finished
+        )
+        if started and st.button("Recomeçar do zero", use_container_width=True):
+            job.delete()
+            clear_run(jid)
+            st.rerun()
+        if started:
+            _render_redo(job)
+
+        if start_bg or start:
+            if not api_key:
+                st.error(f"Falta a chave do {engine.LABEL}. Coloque-a no .env ({engine.KEY_ENV}) ou na barra lateral.")
+                return
+            if start_bg:
+                start_run(job, inp.book, inp.pdf_bytes, options, api_key)
+                st.rerun()
+            _run(engine.make_client(api_key), inp, job, options)
 
     _render_downloads(job)
 
@@ -507,3 +534,37 @@ def _render_timings(job: BookJob) -> None:
             hide_index=True,
             use_container_width=True,
         )
+
+
+def _brasilia(epoch: float) -> str:
+    """Hora local de Brasília (UTC-3) para mostrar quando a espera termina."""
+    return time.strftime("%d/%m às %H:%M", time.gmtime(epoch - 3 * 3600))
+
+
+@st.fragment(run_every=5)
+def _bg_panel(jid: str) -> None:
+    """Andamento da tradução em segundo plano; atualiza a cada 5 s enquanto a página está aberta."""
+    run = get_run(jid)
+    if run is None:
+        st.rerun()
+        return
+    snap = run.snapshot()
+    if snap.state not in ACTIVE_STATES:
+        st.rerun()  # terminou ou parou: redesenha a página inteira (downloads, avisos)
+        return
+
+    st.success("🌙 Traduzindo em segundo plano. **Pode fechar esta página**: o trabalho continua no servidor.")
+    st.progress(min(snap.done / max(snap.total, 1), 1.0), text=f"{snap.done} de {snap.total} partes prontas")
+    if snap.state == "waiting":
+        st.info(f"⏳ {snap.message} Continua sozinho em **{_brasilia(snap.resume_at)}** (horário de Brasília).")
+    elif snap.active:
+        st.markdown("**Em andamento agora:**\n\n" + "\n".join(f"- {t}" for t in snap.active.values()))
+        if snap.message:
+            st.caption(snap.message)
+    st.caption(
+        "O Streamlit gratuito pode adormecer o app depois de muitas horas sem nenhuma visita e apaga o "
+        "progresso se reiniciar: abra de vez em quando e baixe o **arquivo de progresso**."
+    )
+    if st.button("⏹️ Parar (o progresso fica salvo)", use_container_width=True):
+        run.stop()
+        st.rerun()
