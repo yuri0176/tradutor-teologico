@@ -30,6 +30,9 @@ barra lateral:
 ```
 app.py                  # interface Streamlit
 traduzir_livro.py       # tradução de livros pelo terminal, sem navegador
+scripts/rodar_no_github.sh   # roda a tradução no GitHub Actions e guarda o progresso
+.github/workflows/traduzir-livro.yml   # tradução automática diária no GitHub
+requirements-cli.txt    # dependências sem o Streamlit (terminal e GitHub)
 tradutor/
   prompts.py            # system prompt e montagem do pedido
   translator.py         # divisão em trechos e streaming, independente do motor
@@ -211,6 +214,44 @@ existe na memória do servidor. Para rodadas de algumas horas isso basta. Para
 vários dias, abra o app de vez em quando (manda o app ficar acordado) e baixe o
 **arquivo de progresso**.
 
+### Vários dias, sem celular nem computador ligados (GitHub Actions)
+
+Para um livro inteiro com o plano gratuito, use o trabalhador do GitHub
+(`.github/workflows/traduzir-livro.yml`). Ele roda no servidor do GitHub todo dia,
+logo depois que a cota do Gemini zera (04h25 e 05h25 em Brasília), traduz até a
+cota acabar, **guarda o progresso no repositório** (pasta `saida/`) e continua no dia
+seguinte. Quando termina, cria `saida/CONCLUIDO.txt` e as execuções seguintes não
+fazem mais nada.
+
+**Precisa ser um repositório PRIVADO**, porque o PDF do livro e a tradução ficam nele.
+Nunca torne público um repositório que tenha o livro.
+
+Configuração (uma vez, dá para fazer pelo navegador do celular; se faltarem botões,
+use "Site para computador" no menu do navegador):
+
+1. Deixe o PDF na raiz do repositório e confira o nome em `LIVRO` no arquivo
+   `.github/workflows/traduzir-livro.yml` (o padrão já é o nome do PDF em inglês).
+2. Em **Settings → Secrets and variables → Actions → New repository secret**, crie
+   `GEMINI_API_KEY` com a sua chave. (`ANTHROPIC_API_KEY` é opcional.) Em **Variables**,
+   se quiser, crie `TITULO_LIVRO` com o título da capa do PDF.
+3. Em **Actions → Traduzir livro → Run workflow**, coloque `10-12` em "Partes a
+   traduzir" para um **teste** (Prefácio e Capítulo 1). Depois abra a execução: o
+   **resumo** mostra partes prontas, palavras, minutos esperando o Google e modelos usados.
+4. Se o teste for bom, rode de novo com "Partes a traduzir" **vazio** (o livro todo,
+   sem capa nem sumário). A partir daí ele roda sozinho todo dia até terminar.
+5. Os arquivos ficam em `saida/` (`livro.pdf`, `livro.txt`, `livro.md`): abra o arquivo
+   no GitHub e use **Download** / **Raw**.
+
+Detalhes:
+- O plano gratuito de repositórios privados dá 2.000 minutos de Actions por mês; cada
+  execução pára sozinha quando a cota do dia acaba.
+- Mudar idioma, qualidade, referências ou a divisão em capítulos cria um trabalho novo
+  (não aproveita o progresso antigo). Mudar só as partes escolhidas não.
+- Para parar: **Actions → Traduzir livro → ⋯ → Disable workflow**.
+- No terminal, `python traduzir_livro.py livro.pdf --cota-acabou sair --saidas-so-no-fim`
+  faz o mesmo que uma execução do GitHub; sem essas opções, ele espera a cota zerar e
+  continua sozinho.
+
 ### Arquivo de progresso
 
 A pasta `.traducoes/` guarda o progresso, mas no Streamlit Community Cloud ela
@@ -252,6 +293,8 @@ Rode o mesmo comando de novo para continuar de onde parou. Opções principais:
 | `--motor gemini\|claude` | qual API usar |
 | `--qualidade rapida\|alta\|maxima` | profundidade de raciocínio do modelo |
 | `--paralelo 3` | capítulos traduzidos ao mesmo tempo (padrão 3; 1 = um por vez) |
+| `--cota-acabou esperar\|sair` | cota diária esgotada: espera zerar e continua (padrão) ou sai |
+| `--tudo` | inclui capa, sumário e páginas quase vazias (por padrão são puladas) |
 | `--idioma inglês` | idioma de origem (padrão: detectar) |
 | `--saida caminho/nome` | nome-base dos arquivos gerados |
 | `--notas-tradutor`, `--termo-original` | as mesmas opções do app |

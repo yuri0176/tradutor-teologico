@@ -86,7 +86,7 @@ class BackgroundRun:
                 return
             except gemini.DailyQuotaExceeded as exc:
                 # Todos os modelos sem cota hoje: espera a cota zerar e continua.
-                self._wait_until(self._quota_reset_time(), f"Cota diária esgotada ({exc.detail}).")
+                self._wait_until(gemini.quota_reset_time(), f"Cota diária esgotada ({exc.detail}).")
             except _TRANSIENT as exc:
                 transient += 1
                 if transient > _TRANSIENT_MAX:
@@ -124,12 +124,6 @@ class BackgroundRun:
                     self._set(done=self.job.done_count)
         finally:
             events.close()  # para os trabalhadores em paralelo
-
-    def _quota_reset_time(self) -> float:
-        """Quando o primeiro modelo volta a ter cota (meia-noite do Pacífico)."""
-        times = [gemini._UNAVAILABLE.get(m, 0) for m in gemini._model_chain()]
-        future = [t for t in times if t > time.time()]
-        return min(future) if future else gemini._next_quota_reset()
 
     def _wait_until(self, when: float, why: str) -> None:
         self._set(state="waiting", active={}, resume_at=when, message=why)

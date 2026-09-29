@@ -11,3 +11,6 @@ venv/
 
 # Progresso das traduções de livros (retomada)
 .traducoes/
+
+# Arquivos temporários de gravação
+*.tmp

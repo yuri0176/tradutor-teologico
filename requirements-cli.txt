@@ -1,0 +1,9 @@
+# Dependências para traduzir pelo terminal / GitHub Actions (sem o Streamlit)
+google-genai>=1.30
+anthropic>=1.9
+pypdf>=5.0
+pypdfium2>=4.30
+python-dotenv>=1.0
+fpdf2>=2.8
+markdown>=3.5
+uharfbuzz>=0.39

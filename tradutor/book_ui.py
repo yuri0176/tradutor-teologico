@@ -23,6 +23,9 @@ from .chapters import (
     split_by_outline,
     split_fixed,
     SCANNED_PAGES_PER_REQUEST,
+    BOOK_START_CHARS,
+    default_checked,
+    is_front_matter,
 )
 from .export import to_markdown, to_pdf, to_txt
 from .ui import copy_button
@@ -36,35 +39,6 @@ from .translator import (
 )
 
 
-# Partes que quase nunca valem a pena traduzir (e cada uma gasta um pedido da
-# cota diária). Começam desmarcadas; dá para marcar de volta na tabela.
-_SKIP_TITLES = re.compile(
-    r"^\s*(cover|front\s*cover|half\s*title|title\s*page|copyright(\s*page)?|contents|(brief|detailed)\s+contents|contents\s+in\s+brief|table\s+of\s+contents|"
-    r"list\s+of\s+(illustrations|figures|tables)|illustrations|endorsements?|praise(\s+for.*)?|"
-    r"also\s+by.*|about\s+the\s+author|(subject|scripture|name|author|general)?\s*index(es)?|"
-    r"newsletter(\s+sign\s*-?\s*up)?|sign\s*-?\s*up.*|p[aá]ginas\s+iniciais|back\s+cover|"
-    r"capa|folha\s+de\s+rosto|sum[aá]rio|[ií]ndice(\s+.*)?|cr[eé]ditos|direitos\s+autorais|"
-    r"inhalt(sverzeichnis)?|inhaltsverzeichnis|[ií]ndice\s+general|table\s+des\s+mati[eè]res)\s*$",
-    re.IGNORECASE,
-)
-
-
-def is_front_matter(title: str) -> bool:
-    return bool(_SKIP_TITLES.match(title))
-
-
-# Partes com menos texto que isso (páginas de divisão como "Parte 2", páginas só
-# com imagem) também começam desmarcadas: cada uma gastaria um pedido da cota.
-MIN_CONTENT_CHARS = 300
-# A partir daqui consideramos que o livro "começa de verdade".
-BOOK_START_CHARS = 5000
-
-
-def default_checked(title: str, chars: int | None) -> bool:
-    """Marcada por padrão? `chars` é None em livros digitalizados (sem texto)."""
-    if is_front_matter(title):
-        return False
-    return chars is None or chars >= MIN_CONTENT_CHARS
 
 
 @st.cache_data(max_entries=2, show_spinner="Lendo o PDF…")

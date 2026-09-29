@@ -141,6 +141,13 @@ def _next_quota_reset() -> float:
         return time.time() + 6 * 3600
 
 
+def quota_reset_time() -> float:
+    """Quando o primeiro modelo volta a ter cota (epoch): o mais cedo entre os que estão sem cota."""
+    times = [_UNAVAILABLE.get(m, 0) for m in _model_chain()]
+    future = [t for t in times if t > time.time()]
+    return min(future) if future else _next_quota_reset()
+
+
 def _available(models: list[str]) -> list[str]:
     now = time.time()
     return [m for m in models if _UNAVAILABLE.get(m, 0) <= now]
