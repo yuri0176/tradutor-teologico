@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -56,8 +57,11 @@ def to_txt(book_title: str, parts: list[tuple[Segment, str]]) -> str:
 
 # ------------------------------------------------------------------- PDF
 
+_RTL = re.compile("[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]")  # hebraico, árabe e afins
+
+
 class _BookPDF(FPDF):
-    def __init__(self, book_title: str):
+    def __init__(self, book_title: str, rtl: bool = False):
         super().__init__(format=(148, 210))  # A5 em mm
         self.book_title = book_title
         self.set_margins(18, 16, 18)
@@ -67,10 +71,11 @@ class _BookPDF(FPDF):
         self.add_font("Serif", "B", FONTS_DIR / "FreeSerifBold.ttf")
         self.add_font("Serif", "I", FONTS_DIR / "FreeSerifItalic.ttf")
         self.add_font("Serif", "BI", FONTS_DIR / "FreeSerifBoldItalic.ttf")
-        try:  # hebraico da direita para a esquerda, se uharfbuzz estiver instalado
-            self.set_text_shaping(True)
-        except Exception:
-            pass
+        if rtl:  # só o hebraico/árabe precisa de modelagem; para latim e grego ela só
+            try:  # atrapalha a camada de texto (copiar/pesquisar) em alguns servidores
+                self.set_text_shaping(True)
+            except Exception:
+                pass
         self.set_title(book_title)
         self.set_creator("Tradutor Teológico Acadêmico")
 
@@ -144,7 +149,9 @@ def _strip_p(item: str) -> str:
 
 
 def to_pdf(book_title: str, parts: list[tuple[Segment, str]]) -> bytes:
-    pdf = _BookPDF(book_title)
+    # NFC: letras acentuadas em um único caractere (o FreeSerif desenha bem assim).
+    parts = [(seg, unicodedata.normalize("NFC", text)) for seg, text in parts]
+    pdf = _BookPDF(book_title, rtl=any(_RTL.search(text) for _, text in parts))
 
     # Folha de rosto
     pdf.add_page()

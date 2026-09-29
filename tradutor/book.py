@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import queue
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields
@@ -62,6 +63,8 @@ class BookJob:
     warnings: list[str] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    # Tempo de cada trecho: {"parte", "s" (total), "espera" (parado por limite), "modelo"}
+    timings: list[dict] = field(default_factory=list)
 
     # --------------------------------------------------------------- persistência
     @property
@@ -133,6 +136,7 @@ class BookJob:
             self.translations.pop(str(i), None)
             self.planned.pop(str(i), None)
             title = self.segment(i).title
+            self.timings = [t for t in self.timings if not t.get("parte", "").startswith(title[:40])]
             self.warnings = [w for w in self.warnings if not w.startswith(f"{title} (parte")]
         self.save()
 
@@ -221,6 +225,7 @@ def run_book(
             content = engine.document_content(units[c], message) if job.scanned else message
 
             report = TranslationReport(notify=notify)
+            started = time.time()
             pieces = []
             label = f"{seg.title} (parte {c + 1})"
             for piece in engine.stream(client, content, options.effort, report, label):
@@ -236,11 +241,21 @@ def run_book(
             job.warnings.extend(report.warnings)
             job.input_tokens += report.input_tokens
             job.output_tokens += report.output_tokens
+            job.timings.append(_timing(seg.title, c, started, report))
             job.save()
             previous = translated[-CONTEXT_TAIL_CHARS:]
             yield Event("chunk_done", segment=i, chunk=c, chunks=len(units))
 
         yield Event("segment_done", segment=i)
+
+
+def _timing(title: str, chunk: int, started: float, report: TranslationReport) -> dict:
+    return {
+        "parte": f"{title[:40]} · trecho {chunk + 1}",
+        "s": round(time.time() - started),
+        "espera": round(report.waited),
+        "modelo": report.model,
+    }
 
 
 def _plan_segment(job: BookJob, book: Book, pdf_bytes: bytes, i: int) -> list:
@@ -302,6 +317,7 @@ def _run_parallel(client, pdf_bytes: bytes, book: Book, job: BookJob, options: T
                 content = engine.document_content(units[c], message) if job.scanned else message
                 report = TranslationReport(notify=lambda m: events.put(Event("notify", text=m)))
                 pieces: list[str] = []
+                started = time.time()
                 for piece in engine.stream(client, content, options.effort, report, f"{seg.title} (parte {c + 1})"):
                     if stop.is_set():
                         return  # pausa ou erro em outro capítulo: descarta este trecho
@@ -317,6 +333,7 @@ def _run_parallel(client, pdf_bytes: bytes, book: Book, job: BookJob, options: T
                     job.warnings.extend(report.warnings)
                     job.input_tokens += report.input_tokens
                     job.output_tokens += report.output_tokens
+                    job.timings.append(_timing(seg.title, c, started, report))
                     job.save()
                 previous = translated[-CONTEXT_TAIL_CHARS:]
                 events.put(Event("chunk_done", segment=i, chunk=c, chunks=len(units)))

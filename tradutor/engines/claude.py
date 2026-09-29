@@ -103,6 +103,7 @@ def stream(
             yield text
         final = s.get_final_message()
 
+    report.model = get_model()
     usage = final.usage
     report.input_tokens += (
         (usage.input_tokens or 0)

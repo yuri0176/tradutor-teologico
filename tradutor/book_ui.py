@@ -432,6 +432,7 @@ def _render_downloads(job: BookJob) -> None:
     )
 
     _render_summary(parts)
+    _render_timings(job)
 
     base = (job.book_title or "livro").strip().replace("/", "-") + " - tradução"
     st.download_button(
@@ -486,3 +487,23 @@ def _render_summary(parts: list[tuple[Segment, str]]) -> None:
         text = parts[pick][1]
         copy_button(text)
         st.markdown(text)
+
+
+def _render_timings(job: BookJob) -> None:
+    """Onde o tempo foi: trabalho do modelo x espera por limite de uso do Google."""
+    if not job.timings:
+        return
+    total = sum(t["s"] for t in job.timings)
+    waited = sum(t["espera"] for t in job.timings)
+    with st.expander("⏱️ Tempo de cada trecho"):
+        st.markdown(
+            f"**{len(job.timings)} trecho(s)**: {total / 60:.0f} min somados, dos quais "
+            f"**{waited / 60:.0f} min parados esperando** limite de uso ou servidor ocupado do Google."
+        )
+        st.dataframe(
+            pd.DataFrame(job.timings).rename(
+                columns={"parte": "Trecho", "s": "Segundos", "espera": "Esperando", "modelo": "Modelo"}
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )

@@ -26,6 +26,8 @@ class TranslationReport:
     warnings: list[str] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    waited: float = 0.0  # segundos parados esperando limite de uso ou servidor ocupado
+    model: str = ""  # modelo que de fato traduziu
     # Chamado com uma mensagem quando o app precisa esperar ou refazer um
     # trecho; com "" quando a espera termina.
     notify: Callable[[str], None] | None = None

@@ -254,6 +254,7 @@ def stream(
             report.say(f"Limite de pedidos por minuto do Gemini atingido. Aguardando {wait:.0f}s…")
             if started:
                 yield RESTART
+            report.waited += wait
             time.sleep(wait)
             continue
         except (errors.ServerError, httpx.TransportError, ConnectionError):
@@ -270,6 +271,7 @@ def stream(
             report.say(f"Servidor do Gemini ocupado ou instável. Tentando de novo em {wait}s…")
             if started:
                 yield RESTART
+            report.waited += wait
             time.sleep(wait)
             continue
 
@@ -289,6 +291,7 @@ def stream(
         break
 
     report.say("")
+    report.model = model
     if model != requested:
         report.warnings.append(
             f"{label}: traduzido com o modelo {model}, porque a cota do {requested} não estava disponível."
