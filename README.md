@@ -120,9 +120,16 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
 - **Servidor sobrecarregado:** em erros 5xx ou quedas de conexão, o app espera
   (10 s, 20 s, 40 s…) e tenta de novo até 4 vezes. Se o texto do trecho já
   tinha começado a chegar, ele é descartado e gerado de novo, sem duplicar.
-- **Cota diária:** se a cota do dia acabar, o app para e avisa. No modo livro o
-  progresso fica salvo, então é só voltar no dia seguinte e tocar em
-  **Continuar**.
+- **Cota diária:** cada modelo do Gemini tem a sua própria cota gratuita por dia.
+  Quando a do modelo principal acaba, o app passa sozinho para o próximo da
+  lista (`gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash`, os que a sua
+  chave enxergar) e registra um aviso indicando qual modelo traduziu cada trecho.
+  Se todos acabarem, o app para e mostra o limite atingido; no modo livro o
+  progresso fica salvo, então é só voltar depois e tocar em **Continuar**. A
+  cota zera todo dia à meia-noite do horário do Pacífico (4h ou 5h da manhã no
+  Brasil). Para mudar a lista, defina `GEMINI_FALLBACK_MODELS` no `.env`
+  (separado por vírgulas; vazio desliga a troca). Se a sua conta tiver
+  faturamento ativado no Google AI Studio, os limites são muito maiores.
 - **Filtros de segurança:** ficam no nível mais permissivo que ainda bloqueia
   conteúdo grave, para não barrar discussões acadêmicas sobre guerra,
   sexualidade, violência etc.
@@ -146,8 +153,12 @@ defina `GEMINI_MODEL` ou `ANTHROPIC_MODEL` no `.env`. No Gemini, modelos maiores
      "Kapitel 2", "Part One"…);
    - em **blocos de N páginas**, se não houver nada disso.
 
-   Você pode trocar o método, renomear os capítulos e desmarcar o que não
-   quiser traduzir. Cabeçalhos e rodapés corridos e números de página são
+   Partes sem conteúdo do livro (capa, folha de rosto, direitos autorais,
+   sumário, lista de ilustrações, elogios, índices) começam **desmarcadas**,
+   porque cada parte marcada gasta um pedido da cota diária; marque de volta se
+   quiser. Você pode trocar o método, renomear os capítulos, desmarcar o que não
+   quiser traduzir ou escolher uma faixa em **"Traduzir da parte __ até a parte
+   __"**. Cabeçalhos e rodapés corridos e números de página são
    removidos antes do envio.
 3. O app mostra quantos **pedidos à API** e quantos **tokens** a tradução vai
    usar. No Gemini, compare com os limites diários do plano gratuito, porque um

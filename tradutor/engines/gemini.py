@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from datetime import datetime, timedelta
 from typing import Iterator
 
 import httpx
@@ -21,6 +22,11 @@ KEY_HELP = "Crie a chave grátis em aistudio.google.com/apikey"
 DEFAULT_MODEL = "gemini-3.5-flash"
 MAX_OUTPUT_TOKENS = 65536
 PRICE_PER_MTOK = None  # plano gratuito
+
+# Cada modelo tem a sua própria cota diária gratuita. Quando a do modelo principal
+# acaba, o app segue com estes, na ordem (só os que a sua chave enxerga). Para
+# usar outros, ou desligar, defina GEMINI_FALLBACK_MODELS no .env (vazio = desliga).
+DEFAULT_FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"]
 
 # Quantas vezes esperar e repetir quando o Gemini responde "limite por minuto"
 # (429) ou "servidor sobrecarregado" (5xx / queda de conexão).
@@ -65,7 +71,11 @@ _RECITATION_HINT = (
 
 
 class DailyQuotaExceeded(Exception):
-    """Cota diária do plano gratuito esgotada: não adianta tentar de novo hoje."""
+    """Cota diária do plano gratuito esgotada em todos os modelos disponíveis."""
+
+    def __init__(self, detail: str = ""):
+        super().__init__(detail)
+        self.detail = detail
 
 
 API_ERRORS = (errors.APIError, DailyQuotaExceeded, httpx.TransportError, ConnectionError)
@@ -107,6 +117,54 @@ def _config(model: str, effort: str) -> types.GenerateContentConfig:
     )
 
 
+def _model_chain() -> list[str]:
+    """Modelo principal seguido dos alternativos."""
+    primary = get_model()
+    raw = os.getenv("GEMINI_FALLBACK_MODELS")
+    extra = DEFAULT_FALLBACK_MODELS if raw is None else [m.strip() for m in raw.split(",") if m.strip()]
+    return [primary] + [m for m in extra if m != primary]
+
+
+# Modelos sem cota até o instante indicado (epoch): a cota diária zera à meia-noite
+# do Pacífico (horário do Google); 404 vale por 1 hora.
+_UNAVAILABLE: dict[str, float] = {}
+
+
+def _next_quota_reset() -> float:
+    try:
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+        reset = (now + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
+        return reset.timestamp()
+    except Exception:  # sem banco de fusos (Windows sem tzdata)
+        return time.time() + 6 * 3600
+
+
+def _available(models: list[str]) -> list[str]:
+    now = time.time()
+    return [m for m in models if _UNAVAILABLE.get(m, 0) <= now]
+
+
+def _quota_info(exc: errors.APIError) -> tuple[bool, str]:
+    """Lê o erro 429: (é limite diário?, descrição do limite atingido).
+
+    O Google lista o limite estourado em `violations` (quotaId e quotaValue)."""
+    payload = exc.details if isinstance(exc.details, dict) else {}
+    details = (payload.get("error") or payload).get("details") or []
+    parts, daily = [], False
+    for item in details if isinstance(details, list) else []:
+        for v in item.get("violations", []) if isinstance(item, dict) else []:
+            quota_id = str(v.get("quotaId", ""))
+            daily = daily or "PerDay" in quota_id
+            name = re.sub(r"-(Free|Paid)Tier.*$", "", quota_id.replace("PerProjectPerModel", "").replace("PerModel", ""))
+            value = v.get("quotaValue")
+            parts.append(f"{name} = {value}" if value else name)
+    if not parts:  # formato inesperado: cai no texto bruto
+        daily = "PerDay" in str(exc.details)
+    return daily, "; ".join(dict.fromkeys(parts))
+
+
 def _retry_delay(exc: errors.APIError, attempt: int) -> float:
     """Espera sugerida pelo servidor (RetryInfo "37s") ou recuo exponencial."""
     m = re.search(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s", str(exc.details))
@@ -132,10 +190,31 @@ def stream(
     - Cota diária esgotada: levanta DailyQuotaExceeded.
     - Bloqueios e cortes por tamanho viram avisos em `report.warnings`.
     """
-    model = get_model()
+    requested = get_model()
+    chain = _model_chain()
+    skip: set[str] = set()  # modelos já descartados neste pedido
+
+    def next_model() -> str | None:
+        return next((m for m in _available(chain) if m not in skip), None)
+
+    model = next_model()
+    if model is None:
+        raise DailyQuotaExceeded("todos os modelos estão sem cota hoje: " + ", ".join(chain))
     config = _config(model, effort)
     rate_attempts = server_attempts = 0
     recitation_retried = False
+    daily_info = ""
+
+    def switch(reason: str) -> str | None:
+        """Passa ao próximo modelo (recalcula a configuração); None se não houver."""
+        nonlocal model, config, rate_attempts, server_attempts
+        new = next_model()
+        if new is None:
+            return None
+        report.say(f"{reason} Continuando com {new}…")
+        model, config = new, _config(new, effort)
+        rate_attempts = server_attempts = 0
+        return new
 
     while True:
         started = False
@@ -148,10 +227,26 @@ def stream(
                     started = True
                     yield text
         except errors.ClientError as exc:
+            if exc.code == 404:  # modelo inexistente para esta chave
+                _UNAVAILABLE[model] = time.time() + 3600
+                skip.add(model)
+                if switch(f"O modelo {model} não está disponível."):
+                    if started:
+                        yield RESTART
+                    continue
+                raise
             if exc.code != 429:
                 raise
-            if "PerDay" in str(exc.details):
-                raise DailyQuotaExceeded(str(exc.message)) from exc
+            daily, info = _quota_info(exc)
+            if daily:
+                _UNAVAILABLE[model] = _next_quota_reset()
+                skip.add(model)
+                daily_info = f"{model}: {info}" if info else model
+                if switch(f"A cota diária do {model} acabou."):
+                    if started:
+                        yield RESTART
+                    continue
+                raise DailyQuotaExceeded(daily_info) from exc
             if rate_attempts >= MAX_RATE_LIMIT_RETRIES:
                 raise
             wait = _retry_delay(exc, rate_attempts)
@@ -163,6 +258,12 @@ def stream(
             continue
         except (errors.ServerError, httpx.TransportError, ConnectionError):
             if server_attempts >= MAX_SERVER_RETRIES:
+                # Este modelo segue instável: tenta outro, sem descartá-lo de vez.
+                skip.add(model)
+                if switch(f"O {model} continua instável."):
+                    if started:
+                        yield RESTART
+                    continue
                 raise
             wait = min(10 * 2**server_attempts, 90)
             server_attempts += 1
@@ -188,6 +289,10 @@ def stream(
         break
 
     report.say("")
+    if model != requested:
+        report.warnings.append(
+            f"{label}: traduzido com o modelo {model}, porque a cota do {requested} não estava disponível."
+        )
     if last is None:
         report.warnings.append(f"{label}: o Gemini não devolveu resposta.")
         return
@@ -201,8 +306,10 @@ def stream(
 def describe_error(exc: Exception) -> str:
     """Mensagem amigável para os erros mais comuns da API do Gemini."""
     if isinstance(exc, DailyQuotaExceeded):
-        return ("A cota diária gratuita do Gemini acabou. Volte amanhã e toque em Continuar, "
-                "troque GEMINI_MODEL por outro modelo ou use o Claude.")
+        detail = f" (limite atingido: {exc.detail})" if exc.detail else ""
+        return (f"A cota diária gratuita do Gemini acabou{detail}. Ela zera todo dia à meia-noite "
+                "do horário do Pacífico (4h ou 5h da manhã no Brasil). Volte depois e toque em "
+                "Continuar, ative o faturamento no Google AI Studio para limites bem maiores, ou use o Claude.")
     if isinstance(exc, errors.ClientError):
         msg = exc.message or ""
         if exc.code == 400 and "API key" in msg:

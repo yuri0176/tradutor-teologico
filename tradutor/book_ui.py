@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,22 @@ from .translator import (
     get_engine,
     split_into_chunks,
 )
+
+
+# Partes que quase nunca valem a pena traduzir (e cada uma gasta um pedido da
+# cota diária). Começam desmarcadas; dá para marcar de volta na tabela.
+_SKIP_TITLES = re.compile(
+    r"^\s*(cover|front\s*cover|half\s*title|title\s*page|copyright(\s*page)?|contents|(brief|detailed)\s+contents|contents\s+in\s+brief|table\s+of\s+contents|"
+    r"list\s+of\s+(illustrations|figures|tables)|illustrations|endorsements?|praise(\s+for.*)?|"
+    r"also\s+by.*|about\s+the\s+author|(subject|scripture|name|author|general)?\s*index(es)?|"
+    r"capa|folha\s+de\s+rosto|sum[aá]rio|[ií]ndice(\s+.*)?|cr[eé]ditos|direitos\s+autorais|"
+    r"inhalt(sverzeichnis)?|inhaltsverzeichnis|[ií]ndice\s+general|table\s+des\s+mati[eè]res)\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_front_matter(title: str) -> bool:
+    return bool(_SKIP_TITLES.match(title))
 
 
 @st.cache_data(max_entries=2, show_spinner="Lendo o PDF…")
@@ -113,7 +130,7 @@ def render_input() -> BookInput | None:
     table = pd.DataFrame(
         {
             "Nº": list(range(1, len(segments) + 1)),
-            "Traduzir": [True] * len(segments),
+            "Traduzir": [not is_front_matter(s.title) for s in segments],
             "Capítulo": [s.title for s in segments],
             "Páginas": [s.pages_label for s in segments],
             "Palavras": [
@@ -122,6 +139,12 @@ def render_input() -> BookInput | None:
             ],
         }
     )
+    skipped = [s.title for s in segments if is_front_matter(s.title)]
+    if skipped:
+        st.caption(
+            f"{len(skipped)} parte(s) sem conteúdo do livro começam desmarcadas, para não gastar a "
+            f"cota (ex.: {', '.join(skipped[:3])}). Marque na tabela se quiser traduzi-las."
+        )
     edited = st.data_editor(
         table,
         key=f"segments_{digest[:12]}_{description}",
